@@ -6,55 +6,59 @@ from sqlalchemy.orm import sessionmaker, relationship, Session
 import datetime
 
 # 📌 Configuración de SQLite
-DATABASE_URL = "sqlite:///./proveedor.db"
+DATABASE_URL = "sqlite:///./proveedor.db"  
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 # 📌 Modelos de Base de Datos
-
 class Alojamiento(Base):
     __tablename__ = "alojamientos"
-    listing = Column(Integer, primary_key=True, index=True)
+    listing = Column(Integer, primary_key=True, index=True)  
     nombre = Column(String, index=True)
-    ubicacion = Column(String)
-    disponible = Column(Boolean, default=True)
+    direccion = Column(String)
+    ciudad = Column(String)
+    pais = Column(String)
+    imagen_id = Column(Integer, ForeignKey("images.id"), nullable=True)
+    disponible = Column(Boolean, default=True)  # Agregado el campo de disponibilidad
+
+class Image(Base):
+    __tablename__ = "images"
+    id = Column(Integer, primary_key=True, autoincrement=True) 
+    listing_id = Column(Integer, ForeignKey("alojamientos.listing"))
+    link = Column(String)
+
+class ListingCommission(Base):
+    __tablename__ = "listing_commission"
+    id = Column(Integer, primary_key=True, autoincrement=True) 
+    listing_id = Column(Integer, ForeignKey("alojamientos.listing"))
+    commission = Column(Float)
+
+class ListingService(Base):
+    __tablename__ = "listing_services"
+    id = Column(Integer, primary_key=True, autoincrement=True)  
+    listing_id = Column(Integer, ForeignKey("alojamientos.listing"))
+    name = Column(String)
+    description = Column(String)
 
 class Cliente(Base):
     __tablename__ = "clientes"
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)  
     nombre = Column(String, index=True)
     email = Column(String, unique=True, index=True)
 
 class Reserva(Base):
     __tablename__ = "reservas"
-    id = Column(Integer, primary_key=True, index=True)
-    listing = Column(Integer, ForeignKey("alojamientos.listing"))
+    id = Column(Integer, primary_key=True, autoincrement=True) 
+    listing_id = Column(Integer, ForeignKey("alojamientos.listing"))
     cliente_id = Column(Integer, ForeignKey("clientes.id"))
     fecha_reserva = Column(DateTime, default=datetime.datetime.now)
     fecha_entrada = Column(DateTime)
     fecha_salida = Column(DateTime)
-    
-    alojamiento = relationship("Alojamiento")
-    cliente = relationship("Cliente")
 
-class Servicio(Base):
-    __tablename__ = "services"
-    id = Column(Integer, primary_key=True, index=True)
-    listing = Column(Integer, ForeignKey("alojamientos.listing"))
-    nombre = Column(String)
-    descripcion = Column(String)
-
-class Comision(Base):
-    __tablename__ = "listing_comision"
-    id = Column(Integer, primary_key=True, index=True)
-    listing = Column(Integer, ForeignKey("alojamientos.listing"))
-    comision_porcentaje = Column(Float)
-
-# 📌 Crear tablas en la base de datos
 Base.metadata.create_all(bind=engine)
 
-# 📌 Dependencia para obtener sesión de la base de datos
+# 📌 Dependencia de Base de Datos
 def get_db():
     db = SessionLocal()
     try:
@@ -65,78 +69,223 @@ def get_db():
 # 📌 Instancia de FastAPI
 app = FastAPI()
 
-# 📌 Endpoints
+# 📌 Modelos Pydantic para validación de los datos
 
-@app.get("/")
-def home():
-    return {"mensaje": "API del Proveedor en funcionamiento 🚀"}
-
-
-# 📌 Listar alojamientos
-@app.get("/alojamientos")
-def listar_alojamientos(db: Session = Depends(get_db)):
-    return db.query(Alojamiento).all()
-
-# 📌 Consultar disponibilidad de un alojamiento
-@app.get("/disponibilidad/{id}")
-def consultar_disponibilidad(id: int, db: Session = Depends(get_db)):
-    alojamiento = db.query(Alojamiento).filter(Alojamiento.id == id).first()
-    if not alojamiento:
-        raise HTTPException(status_code=404, detail="Alojamiento no encontrado")
-    return {"id": alojamiento.id, "disponible": alojamiento.disponible}
-
-# 📌 Registrar un nuevo alojamiento
-class AlojamientoRequest(BaseModel):
+class AlojamientoCreate(BaseModel):
     nombre: str
-    ubicacion: str
-    disponible: bool = True
+    direccion: str
+    ciudad: str
+    pais: str
+    imagen_id: int  # Puede ser None si no hay imagen
+    disponible: bool = True  # Agregado parámetro disponible
 
-@app.post("/alojamientos")
-def crear_alojamiento(alojamiento: AlojamientoRequest, db: Session = Depends(get_db)):
-    nuevo_alojamiento = Alojamiento(nombre=alojamiento.nombre, ubicacion=alojamiento.ubicacion, disponible=alojamiento.disponible)
-    db.add(nuevo_alojamiento)
-    db.commit()
-    db.refresh(nuevo_alojamiento)
-    return nuevo_alojamiento
+class ImageCreate(BaseModel):
+    listing_id: int
+    link: str
 
-# 📌 Registrar un cliente
-class ClienteRequest(BaseModel):
+class ListingCommissionCreate(BaseModel):
+    listing_id: int
+    commission: float
+
+class ListingServiceCreate(BaseModel):
+    listing_id: int
+    name: str
+    description: str
+
+class ClienteCreate(BaseModel):
     nombre: str
     email: str
 
-@app.post("/clientes")
-def crear_cliente(cliente: ClienteRequest, db: Session = Depends(get_db)):
-    nuevo_cliente = Cliente(nombre=cliente.nombre, email=cliente.email)
-    db.add(nuevo_cliente)
-    db.commit()
-    db.refresh(nuevo_cliente)
-    return nuevo_cliente
-
-# 📌 Hacer una reserva
-class ReservaRequest(BaseModel):
-    alojamiento_id: int
+class ReservaCreate(BaseModel):
+    listing_id: int
     cliente_id: int
-    fecha_estancia: str  # formato "YYYY-MM-DD"
+    fecha_entrada: datetime.datetime
+    fecha_salida: datetime.datetime
 
-@app.post("/reservar")
-def hacer_reserva(reserva: ReservaRequest, db: Session = Depends(get_db)):
-    alojamiento = db.query(Alojamiento).filter(Alojamiento.id == reserva.alojamiento_id).first()
-    if not alojamiento or not alojamiento.disponible:
-        raise HTTPException(status_code=400, detail="Alojamiento no disponible")
 
-    nueva_reserva = Reserva(
-        alojamiento_id=reserva.alojamiento_id,
-        cliente_id=reserva.cliente_id,
-        fecha_estancia=datetime.datetime.strptime(reserva.fecha_estancia, "%Y-%m-%d"),
+# 📌 ENDPOINTS
+
+# Página principal healthcheck
+@app.get("/")
+def read_root():
+    return {"status": "OK"}
+
+# Endpoint para crear un alojamiento
+@app.post("/listings")
+def crear_alojamiento(alojamiento: AlojamientoCreate, db: Session = Depends(get_db)):
+    nuevo_alojamiento = Alojamiento(
+        nombre=alojamiento.nombre,
+        direccion=alojamiento.direccion,
+        ciudad=alojamiento.ciudad,
+        pais=alojamiento.pais,
+        imagen_id=alojamiento.imagen_id,
+        disponible=alojamiento.disponible
     )
     
-    db.add(nueva_reserva)
-    db.commit()
-    db.refresh(nueva_reserva)
-    
-    return {"mensaje": "Reserva confirmada", "detalles": nueva_reserva}
+    try:
+        db.add(nuevo_alojamiento)
+        db.commit()
+        db.refresh(nuevo_alojamiento)
+        return {"mensaje": "Alojamiento creado exitosamente", "alojamiento": nuevo_alojamiento}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al crear el alojamiento: {str(e)}")
 
-# 📌 Obtener todas las reservas
-@app.get("/reservas")
-def listar_reservas(db: Session = Depends(get_db)):
-    return db.query(Reserva).all()
+# Endpoint para crear una imagen
+@app.post("/images")
+def crear_imagen(imagen: ImageCreate, db: Session = Depends(get_db)):
+    nueva_imagen = Image(
+        listing_id=imagen.listing_id,
+        link=imagen.link
+    )
+    
+    try:
+        db.add(nueva_imagen)
+        db.commit()
+        db.refresh(nueva_imagen)
+        return {"mensaje": "Imagen creada exitosamente", "imagen": nueva_imagen}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al crear la imagen: {str(e)}")
+
+
+# Endpoint para crear una comisión de un alojamiento
+@app.post("/listing_commissions")
+def crear_comision(comision: ListingCommissionCreate, db: Session = Depends(get_db)):
+    nueva_comision = ListingCommission(
+        listing_id=comision.listing_id,
+        commission=comision.commission
+    )
+    
+    try:
+        db.add(nueva_comision)
+        db.commit()
+        db.refresh(nueva_comision)
+        return {"mensaje": "Comisión creada exitosamente", "comision": nueva_comision}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al crear la comisión: {str(e)}")
+
+
+# Endpoint para crear un servicio de un alojamiento
+@app.post("/listing_services")
+def crear_servicio(servicio: ListingServiceCreate, db: Session = Depends(get_db)):
+    nuevo_servicio = ListingService(
+        listing_id=servicio.listing_id,
+        name=servicio.name,
+        description=servicio.description
+    )
+    
+    try:
+        db.add(nuevo_servicio)
+        db.commit()
+        db.refresh(nuevo_servicio)
+        return {"mensaje": "Servicio creado exitosamente", "servicio": nuevo_servicio}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al crear el servicio: {str(e)}")
+
+
+# Endpoint para crear un cliente
+@app.post("/clientes")
+def crear_cliente(cliente: ClienteCreate, db: Session = Depends(get_db)):
+    nuevo_cliente = Cliente(
+        nombre=cliente.nombre,
+        email=cliente.email
+    )
+    
+    try:
+        db.add(nuevo_cliente)
+        db.commit()
+        db.refresh(nuevo_cliente)
+        return {"mensaje": "Cliente creado exitosamente", "cliente": nuevo_cliente}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al crear el cliente: {str(e)}")
+
+
+# Endpoint para crear una reserva
+@app.post("/reservas")
+def crear_reserva(reserva: ReservaCreate, db: Session = Depends(get_db)):
+    nueva_reserva = Reserva(
+        listing_id=reserva.listing_id,
+        cliente_id=reserva.cliente_id,
+        fecha_entrada=reserva.fecha_entrada,
+        fecha_salida=reserva.fecha_salida
+    )
+    
+    try:
+        db.add(nueva_reserva)
+        db.commit()
+        db.refresh(nueva_reserva)
+        return {"mensaje": "Reserva creada exitosamente", "reserva": nueva_reserva}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al crear la reserva: {str(e)}")
+
+# Endpoint para obtener todos los alojamientos
+@app.get("/listings")
+def obtener_alojamientos(db: Session = Depends(get_db)):
+    try:
+        alojamientos = db.query(Alojamiento).all()
+        if not alojamientos:
+            raise HTTPException(status_code=404, detail="No hay alojamientos disponibles")
+        return alojamientos
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener alojamientos: {str(e)}")
+
+# Endpoint para obtener los detalles de un alojamiento
+@app.get("/listings/{hotCodigo}")
+def obtener_alojamiento(hotCodigo: int, db: Session = Depends(get_db)):
+    alojamiento = db.query(Alojamiento).filter(Alojamiento.listing == hotCodigo).first()
+    if not alojamiento:
+        raise HTTPException(status_code=404, detail="Alojamiento no encontrado")
+    return alojamiento
+
+# Endpoint para obtener las imágenes de un alojamiento
+@app.get("/listings/{hotCodigo}/images")
+def obtener_imagenes(hotCodigo: int, db: Session = Depends(get_db)):
+    imagenes = db.query(Image).filter(Image.listing_id == hotCodigo).all()
+    return imagenes if imagenes else {"mensaje": "No hay imágenes disponibles"}
+
+# Endpoint para obtener la comisión de un alojamiento
+@app.get("/listings/{hotCodigo}/commission")
+def obtener_comision(hotCodigo: int, db: Session = Depends(get_db)):
+    comision = db.query(ListingCommission).filter(ListingCommission.listing_id == hotCodigo).first()
+    if not comision:
+        raise HTTPException(status_code=404, detail="Comisión no encontrada")
+    return comision
+
+# Endpoint para obtener los servicios de un alojamiento
+@app.get("/listings/{hotCodigo}/services")
+def obtener_servicios(hotCodigo: int, db: Session = Depends(get_db)):
+    servicios = db.query(ListingService).filter(ListingService.listing_id == hotCodigo).all()
+    return servicios if servicios else {"mensaje": "No hay servicios disponibles"}
+
+# Endpoint para obtener un cliente por su ID
+@app.get("/clientes/{cliente_id}")
+def obtener_cliente(cliente_id: int, db: Session = Depends(get_db)):
+    cliente = db.query(Cliente).filter(Cliente.id == cliente_id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    return cliente
+
+# Endpoint para obtener una reserva por su ID
+@app.get("/reservas/{reserva_id}")
+def obtener_reserva(reserva_id: int, db: Session = Depends(get_db)):
+    reserva = db.query(Reserva).filter(Reserva.id == reserva_id).first()
+    if not reserva:
+        raise HTTPException(status_code=404, detail="Reserva no encontrada")
+    return reserva
+
+# Endpoint para obtener todas las reservas de un cliente
+@app.get("/clientes/{cliente_id}/reservas")
+def obtener_reservas_cliente(cliente_id: int, db: Session = Depends(get_db)):
+    reservas = db.query(Reserva).filter(Reserva.cliente_id == cliente_id).all()
+    return reservas if reservas else {"mensaje": "No hay reservas para este cliente"}
+
+# Endpoint para obtener todas las reservas de un alojamiento
+@app.get("/listings/{hotCodigo}/reservas")
+def obtener_reservas_alojamiento(hotCodigo: int, db: Session = Depends(get_db)):
+    reservas = db.query(Reserva).filter(Reserva.listing_id == hotCodigo).all()
+    return reservas if reservas else {"mensaje": "No hay reservas para este alojamiento"}

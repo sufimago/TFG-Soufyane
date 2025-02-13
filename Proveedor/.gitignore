@@ -1,2 +1,5 @@
 # add pycache
 __pycache__/
+
+# add db
+proveedor.db
