@@ -152,7 +152,7 @@ def crear_imagen(imagen: ImageCreate, db: Session = Depends(get_db)):
 
 
 # Endpoint para crear una comisión de un alojamiento
-@app.post("/listing_commissions")
+@app.post("/listing/Commission")
 def crear_comision(comision: ListingCommissionCreate, db: Session = Depends(get_db)):
     nueva_comision = ListingCommission(
         listing_id=comision.listing_id,
@@ -170,7 +170,7 @@ def crear_comision(comision: ListingCommissionCreate, db: Session = Depends(get_
 
 
 # Endpoint para crear un servicio de un alojamiento
-@app.post("/listing_services")
+@app.post("/listing/services")
 def crear_servicio(servicio: ListingServiceCreate, db: Session = Depends(get_db)):
     nuevo_servicio = ListingService(
         listing_id=servicio.listing_id,
@@ -189,7 +189,7 @@ def crear_servicio(servicio: ListingServiceCreate, db: Session = Depends(get_db)
 
 
 # Endpoint para crear un cliente
-@app.post("/clientes")
+@app.post("/cliente")
 def crear_cliente(cliente: ClienteCreate, db: Session = Depends(get_db)):
     nuevo_cliente = Cliente(
         nombre=cliente.nombre,
@@ -207,7 +207,7 @@ def crear_cliente(cliente: ClienteCreate, db: Session = Depends(get_db)):
 
 
 # Endpoint para crear una reserva
-@app.post("/reservas")
+@app.post("/reserva")
 def crear_reserva(reserva: ReservaCreate, db: Session = Depends(get_db)):
     nueva_reserva = Reserva(
         listing_id=reserva.listing_id,
@@ -259,7 +259,7 @@ def obtener_alojamientos(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Error al obtener alojamientos: {str(e)}")
 
 # Endpoint para obtener los listings solo el id
-@app.get("/listings/id")
+@app.get("/listings/ids")
 def obtener_alojamientos(db: Session = Depends(get_db)):
     try:
         alojamientos = db.query(Alojamiento.listing).all()
