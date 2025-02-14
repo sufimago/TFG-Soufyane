@@ -5,25 +5,33 @@ import random
 from testApi import SessionLocal, Alojamiento, Image, ListingCommission, ListingService
 
 # Inicializar Faker
-fake = Faker()
+fake = Faker("es_ES")
 
 # Establecer conexión a la base de datos y crear SessionLocal
-DATABASE_URL = "sqlite:///./proveedor.db"  
+DATABASE_URL = "sqlite:///./proveedor.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Función para generar Alojamiento
 def generar_alojamiento(db: Session, cantidad: int):
+    # Obtener el último 'listing' registrado
+    ultimo_alojamiento = db.query(Alojamiento).order_by(Alojamiento.listing.desc()).first()
+    siguiente_listing = 9000 if not ultimo_alojamiento else ultimo_alojamiento.listing + 1
+
     for _ in range(cantidad):
         alojamiento = Alojamiento(
+            listing=siguiente_listing,
             nombre=fake.company(),
             direccion=fake.address(),
             ciudad=fake.city(),
-            pais=fake.country(),
-            disponible=random.choice([True, False])  # Aleatorio entre True y False
+            pais="España",
+            disponible=random.choice([True])  
         )
         db.add(alojamiento)
+        siguiente_listing += 1  
+
     db.commit()
+
 
 # Función para generar Imágenes
 def generar_imagenes(db: Session, cantidad: int):
@@ -44,7 +52,7 @@ def generar_comisiones(db: Session, cantidad: int):
         alojamiento = random.choice(alojamientos)
         comision = ListingCommission(
             listing_id=alojamiento.listing,
-            commission=random.uniform(5.0, 30.0)  # Comisiones entre 5% y 30%
+            commission=random.uniform(5.0, 20.0)  # Comisiones entre 5% y 20%
         )
         db.add(comision)
     db.commit()

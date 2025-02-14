@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, ForeignKey, Float, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, ForeignKey, Float, DateTime, Sequence
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session
 import datetime
@@ -11,16 +11,18 @@ engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+listing_seq = Sequence('listing_seq', start=9000, increment=1)
+
 # 📌 Modelos de Base de Datos
 class Alojamiento(Base):
     __tablename__ = "alojamientos"
-    listing = Column(Integer, primary_key=True, index=True)  
+    listing = Column(Integer, listing_seq, primary_key=True, index=True)  
     nombre = Column(String, index=True)
     direccion = Column(String)
     ciudad = Column(String)
     pais = Column(String)
     imagen_id = Column(Integer, ForeignKey("images.id"), nullable=True)
-    disponible = Column(Boolean, default=True)  # Agregado el campo de disponibilidad
+    disponible = Column(Boolean, default=True)
 
 class Image(Base):
     __tablename__ = "images"
@@ -233,6 +235,41 @@ def obtener_alojamientos(db: Session = Depends(get_db)):
         return alojamientos
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener alojamientos: {str(e)}")
+
+# Endpoint para obtener todos los listings activos
+@app.get("/listings/actives")
+def obtener_alojamientos(db: Session = Depends(get_db)):
+    try:
+        alojamientos = db.query(Alojamiento).filter(Alojamiento.disponible == True).all()
+        if not alojamientos:
+            raise HTTPException(status_code=404, detail="No hay alojamientos disponibles")
+        return alojamientos
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener alojamientos: {str(e)}")
+
+# Endpoint para obtener todos los listings inactivos
+@app.get("/listings/inactives")
+def obtener_alojamientos(db: Session = Depends(get_db)):
+    try:
+        alojamientos = db.query(Alojamiento).filter(Alojamiento.disponible == False).all()
+        if not alojamientos:
+            raise HTTPException(status_code=404, detail="No hay alojamientos disponibles")
+        return alojamientos
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener alojamientos: {str(e)}")
+
+# Endpoint para obtener los listings solo el id
+@app.get("/listings/id")
+def obtener_alojamientos(db: Session = Depends(get_db)):
+    try:
+        alojamientos = db.query(Alojamiento.listing).all()
+        if not alojamientos:
+            raise HTTPException(status_code=404, detail="No hay alojamientos disponibles")
+        
+        return [a[0] for a in alojamientos]  # Extraer los valores de la tupla
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener alojamientos: {str(e)}")
+
 
 # Endpoint para obtener los detalles de un alojamiento
 @app.get("/listings/{hotCodigo}")
