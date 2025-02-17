@@ -150,7 +150,6 @@ def crear_imagen(imagen: ImageCreate, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error al crear la imagen: {str(e)}")
 
-
 # Endpoint para crear una comisión de un alojamiento
 @app.post("/listing/Commission")
 def crear_comision(comision: ListingCommissionCreate, db: Session = Depends(get_db)):
@@ -167,7 +166,6 @@ def crear_comision(comision: ListingCommissionCreate, db: Session = Depends(get_
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error al crear la comisión: {str(e)}")
-
 
 # Endpoint para crear un servicio de un alojamiento
 @app.post("/listing/services")
@@ -326,3 +324,28 @@ def obtener_reservas_cliente(cliente_id: int, db: Session = Depends(get_db)):
 def obtener_reservas_alojamiento(hotCodigo: int, db: Session = Depends(get_db)):
     reservas = db.query(Reserva).filter(Reserva.listing_id == hotCodigo).all()
     return reservas if reservas else {"mensaje": "No hay reservas para este alojamiento"}
+
+
+# Obtener alojamientos que no tienen reservas en un rago de fechas para la disponibilidad
+@app.get("/check-availability")
+def obtener_alojamientos_disponibles(
+    fecha_entrada: datetime.datetime, 
+    fecha_salida: datetime.datetime, 
+    db: Session = Depends(get_db)
+):
+    # Subconsulta para encontrar alojamientos reservados en el rango de fechas
+    subquery = db.query(Reserva.listing_id).filter(
+        (Reserva.fecha_entrada < fecha_salida) & 
+        (Reserva.fecha_salida > fecha_entrada)  # Se solapan con las fechas dadas
+    ).subquery()
+
+    # Filtrar alojamientos que no estén en la subconsulta de reservas
+    alojamientos_disponibles = db.query(Alojamiento).filter(
+        Alojamiento.disponible == True,  # Solo los que están marcados como disponibles
+        ~Alojamiento.listing.in_(subquery)  # Que no estén reservados en ese período
+    ).all()
+
+    if not alojamientos_disponibles:
+        raise HTTPException(status_code=404, detail="No hay alojamientos disponibles en estas fechas")
+    
+    return alojamientos_disponibles
