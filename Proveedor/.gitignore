@@ -3,3 +3,6 @@ __pycache__/
 
 # add db
 proveedor.db
+
+# add .idea
+.idea/

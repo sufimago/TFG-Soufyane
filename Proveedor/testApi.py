@@ -23,6 +23,15 @@ class Alojamiento(Base):
     pais = Column(String)
     imagen_id = Column(Integer, ForeignKey("images.id"), nullable=True)
     disponible = Column(Boolean, default=True)
+    seasonal_prices = relationship("seasonalPrices", backref="alojamiento")
+
+class seasonalPrices(Base):
+    __tablename__ = "seasonal_prices"
+    id = Column(Integer, primary_key=True, autoincrement=True) 
+    listing = Column(Integer, ForeignKey("alojamientos.listing"))
+    price = Column(Float)
+    start_date = Column(DateTime)    
+    end_date = Column(DateTime)
 
 class Image(Base):
     __tablename__ = "images"
@@ -80,6 +89,12 @@ class AlojamientoCreate(BaseModel):
     pais: str
     imagen_id: int  # Puede ser None si no hay imagen
     disponible: bool = True  # Agregado parámetro disponible
+
+class SeasonalPricesCreate(BaseModel):
+    listing: int
+    price: float
+    start_date: datetime.datetime    
+    end_date: datetime.datetime
 
 class ImageCreate(BaseModel):
     listing_id: int

@@ -82,3 +82,4 @@ def generar_datos(db: Session, cantidad: int):
 if __name__ == "__main__":
     db = SessionLocal()  # Iniciar una sesión de base de datos
     generar_datos(db, 500)  # Generar 500 registros por cada tabla
+    db.close()  # Cerrar la sesión de base de datos
