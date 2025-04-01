@@ -32,7 +32,7 @@ def generateSeasonalPrices(db: Session):
     db.commit()
 
 def printPricesForListing():
-    alojamiento = db.query(Alojamiento).filter(Alojamiento.listing == 9001).first()
+    alojamiento = db.query(Alojamiento).filter(Alojamiento.listing == 9000).first()
     if alojamiento:
         for precio in alojamiento.seasonal_prices:
             print(f"Precio: {precio.price}, Desde: {precio.start_date}, Hasta: {precio.end_date}")
@@ -40,6 +40,6 @@ def printPricesForListing():
 
 if __name__ == "__main__":
     db = SessionLocal()
-    generateSeasonalPrices(db)
-    #test()
+    #generateSeasonalPrices(db)
+    printPricesForListing()
     db.close()

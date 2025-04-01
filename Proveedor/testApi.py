@@ -130,15 +130,7 @@ def read_root():
 # Endpoint para crear un alojamiento
 @app.post("/listings")
 def crear_alojamiento(alojamiento: AlojamientoCreate, db: Session = Depends(get_db)):
-    nuevo_alojamiento = Alojamiento(
-        nombre=alojamiento.nombre,
-        direccion=alojamiento.direccion,
-        ciudad=alojamiento.ciudad,
-        pais=alojamiento.pais,
-        imagen_id=alojamiento.imagen_id,
-        disponible=alojamiento.disponible
-    )
-    
+    nuevo_alojamiento = Alojamiento(**alojamiento.dict())
     try:
         db.add(nuevo_alojamiento)
         db.commit()
@@ -146,7 +138,9 @@ def crear_alojamiento(alojamiento: AlojamientoCreate, db: Session = Depends(get_
         return {"mensaje": "Alojamiento creado exitosamente", "alojamiento": nuevo_alojamiento}
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error al crear el alojamiento: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+        
 
 # Endpoint para crear una imagen
 @app.post("/images")
@@ -343,24 +337,54 @@ def obtener_reservas_alojamiento(hotCodigo: int, db: Session = Depends(get_db)):
 
 # Obtener alojamientos que no tienen reservas en un rago de fechas para la disponibilidad
 @app.get("/check-availability")
-def obtener_alojamientos_disponibles(
+def obtener_alojamiento_disponible(
     fecha_entrada: datetime.datetime, 
     fecha_salida: datetime.datetime, 
+    listing_id: int,  # Solo un ID de alojamiento
     db: Session = Depends(get_db)
 ):
-    # Subconsulta para encontrar alojamientos reservados en el rango de fechas
-    subquery = db.query(Reserva.listing_id).filter(
-        (Reserva.fecha_entrada < fecha_salida) & 
-        (Reserva.fecha_salida > fecha_entrada)  # Se solapan con las fechas dadas
-    ).subquery()
+    # Consultar el alojamiento específico
+    alojamiento_disponible = db.query(Alojamiento).filter(
+        Alojamiento.disponible == True,
+        Alojamiento.listing == listing_id  # Filtramos por el ID del alojamiento
+    ).first()
 
-    # Filtrar alojamientos que no estén en la subconsulta de reservas
-    alojamientos_disponibles = db.query(Alojamiento).filter(
-        Alojamiento.disponible == True,  # Solo los que están marcados como disponibles
-        ~Alojamiento.listing.in_(subquery)  # Que no estén reservados en ese período
+    if not alojamiento_disponible:
+        raise HTTPException(status_code=404, detail="Alojamiento no encontrado o no disponible")
+
+    # Verificar si el alojamiento está reservado en las fechas solicitadas
+    reserva_existente = db.query(Reserva).filter(
+        Reserva.listing_id == alojamiento_disponible.listing,
+        (Reserva.fecha_entrada < fecha_salida), 
+        (Reserva.fecha_salida > fecha_entrada)
+    ).first()
+
+    if reserva_existente:
+        raise HTTPException(status_code=404, detail="El alojamiento no está disponible en estas fechas")
+
+    # Obtener precios de temporada para el alojamiento específico
+    precios = db.query(seasonalPrices).filter(
+        seasonalPrices.listing == alojamiento_disponible.listing,
+        seasonalPrices.start_date <= fecha_salida,
+        seasonalPrices.end_date >= fecha_entrada
     ).all()
 
-    if not alojamientos_disponibles:
-        raise HTTPException(status_code=404, detail="No hay alojamientos disponibles en estas fechas")
-    
-    return alojamientos_disponibles
+    if not precios:
+        raise HTTPException(status_code=404, detail="No hay precios disponibles para estas fechas")
+
+    # Calcular el precio total de la estancia
+    total_precio = 0
+    dias_totales = (fecha_salida - fecha_entrada).days
+
+    for dia in range(dias_totales):
+        fecha_actual = fecha_entrada + datetime.timedelta(days=dia)
+        for precio in precios:
+            if precio.start_date <= fecha_actual <= precio.end_date:
+                total_precio += precio.price
+                break  # Tomamos el primer precio válido para esa fecha
+
+    # Devolver el resultado
+    return {
+        "alojamiento": alojamiento_disponible,
+        "precio_por_dia": total_precio / dias_totales
+    }
