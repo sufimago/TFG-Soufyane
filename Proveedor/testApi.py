@@ -23,7 +23,14 @@ class Alojamiento(Base):
     pais = Column(String)
     imagen_id = Column(Integer, ForeignKey("images.id"), nullable=True)
     disponible = Column(Boolean, default=True)
+    occupants = Column(Integer, default=1)
     seasonal_prices = relationship("seasonalPrices", backref="alojamiento")
+
+class PoliticaCancelacion(Base):
+    __tablename__ = "politicas_cancelacion"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    dias_antes_cancelacion = Column(Integer, nullable=False)  # Por ejemplo: 7, 3, 1
+    porcentaje_penalizacion = Column(Float, nullable=False)   # Porcentaje: 0.25, 0.5, 1.0    
 
 class seasonalPrices(Base):
     __tablename__ = "seasonal_prices"
@@ -89,6 +96,7 @@ class AlojamientoCreate(BaseModel):
     pais: str
     imagen_id: int  # Puede ser None si no hay imagen
     disponible: bool = True  # Agregado parámetro disponible
+    occupants: int = 1  # Agregado parámetro occupants
 
 class SeasonalPricesCreate(BaseModel):
     listing: int
@@ -341,12 +349,14 @@ def obtener_alojamiento_disponible(
     fecha_entrada: datetime.datetime, 
     fecha_salida: datetime.datetime, 
     listing_id: int,  # Solo un ID de alojamiento
+    occupants: int,  # Número de personas
     db: Session = Depends(get_db)
 ):
     # Consultar el alojamiento específico
     alojamiento_disponible = db.query(Alojamiento).filter(
         Alojamiento.disponible == True,
-        Alojamiento.listing == listing_id  # Filtramos por el ID del alojamiento
+        Alojamiento.listing == listing_id,  # Filtramos por el ID del alojamiento
+        Alojamiento.occupants == occupants  # Verificamos la capacidad del alojamiento
     ).first()
 
     if not alojamiento_disponible:
@@ -358,6 +368,10 @@ def obtener_alojamiento_disponible(
         (Reserva.fecha_entrada < fecha_salida), 
         (Reserva.fecha_salida > fecha_entrada)
     ).first()
+
+    # Obtener políticas de cancelación (ordenadas de mayor a menor)
+    politicas = db.query(PoliticaCancelacion).order_by(PoliticaCancelacion.dias_antes_cancelacion.desc()).all()
+
 
     if reserva_existente:
         raise HTTPException(status_code=404, detail="El alojamiento no está disponible en estas fechas")
@@ -381,10 +395,76 @@ def obtener_alojamiento_disponible(
         for precio in precios:
             if precio.start_date <= fecha_actual <= precio.end_date:
                 total_precio += precio.price
-                break  # Tomamos el primer precio válido para esa fecha
+                break  # Tomamos el primer precio válido para esa fecha        
 
     # Devolver el resultado
     return {
         "alojamiento": alojamiento_disponible,
-        "precio_por_dia": total_precio / dias_totales
+        "precio_por_dia": total_precio / dias_totales,
+        "ocupantes": occupants,
+        "politicas_cancelacion": [
+        {
+            "dias_antes": p.dias_antes_cancelacion,
+            "penalizacion": p.porcentaje_penalizacion
+        } for p in politicas
+    ]
     }
+
+@app.get("/quote")
+def cotizar_alojamiento(
+    fecha_entrada: datetime.datetime,
+    fecha_salida: datetime.datetime,
+    listing_id: int,
+    num_personas: int,
+    db: Session = Depends(get_db)
+):
+    alojamiento = db.query(Alojamiento).filter(Alojamiento.listing == listing_id, Alojamiento.disponible == True).first()
+    if not alojamiento:
+        raise HTTPException(status_code=404, detail="Alojamiento no encontrado o no disponible")
+
+    if num_personas > alojamiento.occupants:
+        raise HTTPException(status_code=400, detail=f"El alojamiento solo permite hasta {alojamiento.occupants} personas")
+
+    reserva_existente = db.query(Reserva).filter(
+        Reserva.listing_id == alojamiento.listing,
+        (Reserva.fecha_entrada < fecha_salida), 
+        (Reserva.fecha_salida > fecha_entrada)
+    ).first()
+    
+    politicas = db.query(PoliticaCancelacion).order_by(PoliticaCancelacion.dias_antes_cancelacion.desc()).all()
+
+
+    if reserva_existente:
+        raise HTTPException(status_code=400, detail="El alojamiento no está disponible en estas fechas")
+
+    precios = db.query(seasonalPrices).filter(
+        seasonalPrices.listing == alojamiento.listing,
+        seasonalPrices.start_date <= fecha_salida,
+        seasonalPrices.end_date >= fecha_entrada
+    ).all()
+
+    if not precios:
+        raise HTTPException(status_code=404, detail="No hay precios disponibles para estas fechas")
+
+    total_precio = 0
+    dias_totales = (fecha_salida - fecha_entrada).days
+
+    for dia in range(dias_totales):
+        fecha_actual = fecha_entrada + datetime.timedelta(days=dia)
+        for precio in precios:
+            if precio.start_date <= fecha_actual <= precio.end_date:
+                total_precio += precio.price
+                break  
+
+    return {
+    "alojamiento": alojamiento,
+    "precio_total": total_precio,
+    "precio_por_dia": total_precio / dias_totales,
+    "num_personas": num_personas,
+    "politicas_cancelacion": [
+        {
+            "dias_antes": p.dias_antes_cancelacion,
+            "penalizacion": p.porcentaje_penalizacion
+        } for p in politicas
+    ]
+}
