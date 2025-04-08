@@ -2,7 +2,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 import random
 from datetime import datetime
-from testApi import SessionLocal, seasonalPrices, Alojamiento
+from Proveedor.main import SessionLocal, seasonalPrices, Alojamiento
 
 # Establecer conexión a la base de datos y crear SessionLocal
 DATABASE_URL = "sqlite:///./proveedor.db"

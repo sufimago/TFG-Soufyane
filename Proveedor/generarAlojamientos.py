@@ -2,7 +2,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from faker import Faker
 import random
-from testApi import SessionLocal, Alojamiento, Image, ListingCommission, ListingService
+from Proveedor.main import SessionLocal, Alojamiento, Image, ListingCommission, ListingService
 
 # Inicializar Faker
 fake = Faker("es_ES")
