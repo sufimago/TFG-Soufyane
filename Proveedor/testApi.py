@@ -1,3 +1,4 @@
+from random import randint
 from fastapi import FastAPI, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, ForeignKey, Float, DateTime, Sequence
@@ -73,6 +74,7 @@ class Reserva(Base):
     fecha_reserva = Column(DateTime, default=datetime.datetime.now)
     fecha_entrada = Column(DateTime)
     fecha_salida = Column(DateTime)
+    localizador = Column(Integer, unique=True, index=True)  # Localizador único para la reserva
 
 Base.metadata.create_all(bind=engine)
 
@@ -228,14 +230,15 @@ def crear_reserva(reserva: ReservaCreate, db: Session = Depends(get_db)):
         listing_id=reserva.listing_id,
         cliente_id=reserva.cliente_id,
         fecha_entrada=reserva.fecha_entrada,
-        fecha_salida=reserva.fecha_salida
+        fecha_salida=reserva.fecha_salida,
+        localizador=reserva.localizador  # Localizador único para la reserva
     )
     
     try:
         db.add(nueva_reserva)
         db.commit()
         db.refresh(nueva_reserva)
-        return {"mensaje": "Reserva creada exitosamente", "reserva": nueva_reserva}
+        return {"mensaje": "Reserva creada exitosamente", "reserva": nueva_reserva, "localizador": reserva.localizador}
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error al crear la reserva: {str(e)}")
@@ -468,3 +471,87 @@ def cotizar_alojamiento(
         } for p in politicas
     ]
 }
+
+@app.post("/confirm")
+def confirmar_reserva(
+    data: ReservaCreate,
+    db: Session = Depends(get_db)
+):
+    # Verificar alojamiento
+    alojamiento = db.query(Alojamiento).filter(
+        Alojamiento.disponible == True,
+        Alojamiento.listing == data.listing_id
+    ).first()
+
+    if not alojamiento:
+        raise HTTPException(status_code=404, detail="Alojamiento no disponible")
+
+    # Verificar que no haya reservas en el rango
+    reserva_existente = db.query(Reserva).filter(
+        Reserva.listing_id == data.listing_id,
+        (Reserva.fecha_entrada < data.fecha_salida), 
+        (Reserva.fecha_salida > data.fecha_entrada)
+    ).first()
+
+    if reserva_existente:
+        raise HTTPException(status_code=400, detail="El alojamiento ya está reservado en ese rango de fechas")
+
+    # Obtener precios
+    precios = db.query(seasonalPrices).filter(
+        seasonalPrices.listing == data.listing_id,
+        seasonalPrices.start_date <= data.fecha_salida,
+        seasonalPrices.end_date >= data.fecha_entrada
+    ).all()
+
+    if not precios:
+        raise HTTPException(status_code=404, detail="No hay precios para este alojamiento en estas fechas")
+
+    dias_totales = (data.fecha_salida - data.fecha_entrada).days
+    total_precio = 0
+
+    for dia in range(dias_totales):
+        fecha_actual = data.fecha_entrada + datetime.timedelta(days=dia)
+        for precio in precios:
+            if precio.start_date <= fecha_actual <= precio.end_date:
+                total_precio += precio.price
+                break
+
+    localizador = generar_localizador_unico(db)            
+    nueva_reserva = Reserva(
+        listing_id=data.listing_id,
+        cliente_id=data.cliente_id,
+        fecha_entrada=data.fecha_entrada,
+        fecha_salida=data.fecha_salida,
+        localizador = localizador  # Localizador único para la reserva
+    )
+
+    try:
+        db.add(nueva_reserva)
+        db.commit()
+        db.refresh(nueva_reserva)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al confirmar la reserva: {str(e)}")
+
+    # select alojamiento desde base de datos
+    alojamiento = db.query(Alojamiento).filter(Alojamiento.listing == data.listing_id).first()
+    return {
+        "mensaje": "Reserva confirmada exitosamente",
+        "reserva": {
+            "alojamiento_id": data.listing_id,
+            "cliente_id": data.cliente_id,
+            "fecha_entrada": data.fecha_entrada,
+            "fecha_salida": data.fecha_salida,
+            "localizador": localizador,
+            "precio_total": total_precio,
+            "precio_por_dia": total_precio / dias_totales,
+            "información alojamiento": alojamiento
+        }
+    }
+
+def generar_localizador_unico(db: Session):
+    while True:
+        localizador = randint(100000, 9999999)
+        existe = db.query(Reserva).filter(Reserva.localizador == localizador).first()
+        if not existe:
+            return localizador
