@@ -555,3 +555,19 @@ def generar_localizador_unico(db: Session):
         existe = db.query(Reserva).filter(Reserva.localizador == localizador).first()
         if not existe:
             return localizador
+
+
+# Endpoint para eliminar la informacion de imagenes de un alojamiento
+@app.delete("/images/{image_id}")
+def eliminar_imagen(image_id: int, db: Session = Depends(get_db)):
+    imagen = db.query(Image).filter(Image.id == image_id).first()
+    if not imagen:
+        raise HTTPException(status_code=404, detail="Imagen no encontrada")
+    
+    try:
+        db.delete(imagen)
+        db.commit()
+        return {"mensaje": "Imagen eliminada exitosamente"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al eliminar la imagen: {str(e)}")
