@@ -439,6 +439,9 @@ def cotizar_alojamiento(
     
     politicas = db.query(PoliticaCancelacion).order_by(PoliticaCancelacion.dias_antes_cancelacion.desc()).all()
 
+    # Obtener la url de la imagen del alojamiento
+    imagen = db.query(Image).filter(Image.listing_id == alojamiento.listing).first()
+
 
     if reserva_existente:
         raise HTTPException(status_code=400, detail="El alojamiento no está disponible en estas fechas")
@@ -467,6 +470,7 @@ def cotizar_alojamiento(
     "precio_total": total_precio,
     "precio_por_dia": total_precio / dias_totales,
     "num_personas": num_personas,
+    "imagen": imagen.link if imagen else None,
     "politicas_cancelacion": [
         {
             "dias_antes": p.dias_antes_cancelacion,
