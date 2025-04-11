@@ -375,6 +375,8 @@ def obtener_alojamiento_disponible(
     # Obtener políticas de cancelación (ordenadas de mayor a menor)
     politicas = db.query(PoliticaCancelacion).order_by(PoliticaCancelacion.dias_antes_cancelacion.desc()).all()
 
+    #Obtener la url de la imagen del alojamiento
+    imagen = db.query(Image).filter(Image.listing_id == alojamiento_disponible.listing).first()
 
     if reserva_existente:
         raise HTTPException(status_code=404, detail="El alojamiento no está disponible en estas fechas")
@@ -405,6 +407,7 @@ def obtener_alojamiento_disponible(
         "alojamiento": alojamiento_disponible,
         "precio_por_dia": total_precio / dias_totales,
         "ocupantes": occupants,
+        "imagen": imagen.link if imagen else None,
         "politicas_cancelacion": [
         {
             "dias_antes": p.dias_antes_cancelacion,
