@@ -1,4 +1,5 @@
 from random import randint
+import random
 from fastapi import FastAPI, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, ForeignKey, Float, DateTime, Sequence
@@ -238,7 +239,15 @@ def crear_reserva(reserva: ReservaCreate, db: Session = Depends(get_db)):
         db.add(nueva_reserva)
         db.commit()
         db.refresh(nueva_reserva)
-        return {"mensaje": "Reserva creada exitosamente", "reserva": nueva_reserva, "localizador": reserva.localizador}
+        # Opcional: obtener datos del cliente para mostrar
+        cliente = db.query(Cliente).filter(Cliente.id == reserva.cliente_id).first()
+
+        return {
+            "mensaje": "Reserva creada exitosamente",
+            "reserva": nueva_reserva,
+            "cliente": {"nombre": cliente.nombre, "email": cliente.email},
+            "localizador": reserva.localizador
+        }
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error al crear la reserva: {str(e)}")
@@ -542,6 +551,10 @@ def confirmar_reserva(
 
     # select alojamiento desde base de datos
     alojamiento = db.query(Alojamiento).filter(Alojamiento.listing == data.listing_id).first()
+    cliente = db.query(Cliente).filter(Cliente.id == data.cliente_id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    
     return {
         "mensaje": "Reserva confirmada exitosamente",
         "reserva": {
@@ -552,7 +565,12 @@ def confirmar_reserva(
             "localizador": localizador,
             "precio_total": total_precio,
             "precio_por_dia": total_precio / dias_totales,
-            "información alojamiento": alojamiento
+            "información alojamiento": alojamiento,
+            "información cliente": {
+                "nombre": cliente.nombre,  
+                "email": cliente.email
+            },
+            "localizador": localizador
         }
     }
 
@@ -578,3 +596,21 @@ def eliminar_imagen(image_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error al eliminar la imagen: {str(e)}")
+    
+
+@app.post("/listing/prices")
+def crear_precio(precio: SeasonalPricesCreate, db: Session = Depends(get_db)):
+    nuevo_precio = seasonalPrices(
+        listing=precio.listing,
+        price=precio.price,
+        start_date=precio.start_date,
+        end_date=precio.end_date
+    )
+    try:
+        db.add(nuevo_precio)
+        db.commit()
+        db.refresh(nuevo_precio)
+        return {"mensaje": "Precio de temporada creado exitosamente", "precio": nuevo_precio}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al crear el precio: {str(e)}")
