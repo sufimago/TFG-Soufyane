@@ -129,7 +129,8 @@ class ReservaCreate(BaseModel):
     cliente_id: int
     fecha_entrada: datetime.datetime
     fecha_salida: datetime.datetime
-
+    nombre_cliente: str 
+    email_cliente: str
 
 # 📌 ENDPOINTS
 
@@ -335,12 +336,19 @@ def obtener_cliente(cliente_id: int, db: Session = Depends(get_db)):
     return cliente
 
 # Endpoint para obtener una reserva por su ID
-@app.get("/reservas/{reserva_id}")
-def obtener_reserva(reserva_id: int, db: Session = Depends(get_db)):
-    reserva = db.query(Reserva).filter(Reserva.id == reserva_id).first()
+@app.get("/traceSearch/{localizador}")
+def obtener_reserva(localizador: int, db: Session = Depends(get_db)):
+    reserva = db.query(Reserva).filter(Reserva.localizador == localizador).first()
+    cliente = db.query(Cliente).filter(Cliente.id == reserva.cliente_id).first()
+    alojamiento = db.query(Alojamiento).filter(Alojamiento.listing == reserva.listing_id).first()
     if not reserva:
         raise HTTPException(status_code=404, detail="Reserva no encontrada")
-    return reserva
+    return {
+        "reserva": reserva,
+        "cliente": cliente,
+        "alojamiento": alojamiento
+    }
+
 
 # Endpoint para obtener todas las reservas de un cliente
 @app.get("/clientes/{cliente_id}/reservas")
@@ -614,3 +622,53 @@ def crear_precio(precio: SeasonalPricesCreate, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error al crear el precio: {str(e)}")
+
+class AlojamientoUpdateRequest(BaseModel):
+    alojamiento: AlojamientoCreate  
+    listing_id: int 
+
+
+@app.put("/listings")
+def actualizar_alojamiento(
+    request_data: AlojamientoUpdateRequest,  # Solo recibimos el body
+    db: Session = Depends(get_db)
+):
+    # Extraemos el listing_id del body
+    listing_id = request_data.listing_id
+    
+    # Buscar el alojamiento existente
+    db_alojamiento = db.query(Alojamiento).filter(Alojamiento.listing == listing_id).first()
+    if not db_alojamiento:
+        raise HTTPException(status_code=404, detail="Alojamiento no encontrado")
+
+    # Actualizar los campos
+    update_data = request_data.alojamiento.dict()
+    for key, value in update_data.items():
+        if hasattr(db_alojamiento, key):
+            setattr(db_alojamiento, key, value)
+
+    try:
+        db.commit()
+        db.refresh(db_alojamiento)
+        return {
+            "mensaje": "Alojamiento actualizado exitosamente",
+            "alojamiento": db_alojamiento
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al actualizar: {str(e)}")
+    
+
+@app.delete("/reserva/{localizador}")
+def eliminar_reserva(localizador: int, db: Session = Depends(get_db)):
+    reserva = db.query(Reserva).filter(Reserva.localizador == localizador).first()
+    if not reserva:
+        raise HTTPException(status_code=404, detail="Reserva no encontrada")
+    
+    try:
+        db.delete(reserva)
+        db.commit()
+        return {"mensaje": "Reserva eliminada exitosamente"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al eliminar la reserva: {str(e)}")    
