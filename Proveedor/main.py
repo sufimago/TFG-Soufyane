@@ -1,6 +1,13 @@
+import hashlib
+import hmac
+import http
+import json
+import logging
 from random import randint
 import random
-from fastapi import FastAPI, Depends, HTTPException
+from typing import List
+from fastapi import BackgroundTasks, FastAPI, Depends, HTTPException
+import httpx
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, ForeignKey, Float, DateTime, Sequence
 from sqlalchemy.ext.declarative import declarative_base
@@ -349,7 +356,6 @@ def obtener_reserva(localizador: int, db: Session = Depends(get_db)):
         "alojamiento": alojamiento
     }
 
-
 # Endpoint para obtener todas las reservas de un cliente
 @app.get("/clientes/{cliente_id}/reservas")
 def obtener_reservas_cliente(cliente_id: int, db: Session = Depends(get_db)):
@@ -430,7 +436,7 @@ def obtener_alojamiento_disponible(
             "dias_antes": p.dias_antes_cancelacion,
             "penalizacion": p.porcentaje_penalizacion
         } for p in politicas
-    ]
+        ]
     }
 
 @app.get("/quote")
@@ -577,8 +583,7 @@ def confirmar_reserva(
             "información cliente": {
                 "nombre": cliente.nombre,  
                 "email": cliente.email
-            },
-            "localizador": localizador
+            }
         }
     }
 
@@ -631,6 +636,7 @@ class AlojamientoUpdateRequest(BaseModel):
 @app.put("/listings")
 def actualizar_alojamiento(
     request_data: AlojamientoUpdateRequest,  # Solo recibimos el body
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     # Extraemos el listing_id del body
@@ -642,7 +648,7 @@ def actualizar_alojamiento(
         raise HTTPException(status_code=404, detail="Alojamiento no encontrado")
 
     # Actualizar los campos
-    update_data = request_data.alojamiento.dict()
+    update_data = request_data.alojamiento.model_dump()
     for key, value in update_data.items():
         if hasattr(db_alojamiento, key):
             setattr(db_alojamiento, key, value)
@@ -650,6 +656,32 @@ def actualizar_alojamiento(
     try:
         db.commit()
         db.refresh(db_alojamiento)
+
+        # Notificar a los webhooks suscritos
+        webhooks = db.query(ClientWebhook).filter(
+            ClientWebhook.is_active == True,
+            ClientWebhook.event_types.contains("listing_updated")
+        ).all()
+        
+        payload = {
+            "event_type": "listing_updated",
+            "listing_id": listing_id,
+            "data": {
+                "nombre": db_alojamiento.nombre,
+                "disponible": db_alojamiento.disponible,
+                "occupants": db_alojamiento.occupants
+            },
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+        
+        for webhook in webhooks:
+            background_tasks.add_task(
+                _send_webhook_implementation,
+                url=webhook.webhook_url,
+                payload=payload,
+                token=webhook.secret_token
+        )
+
         return {
             "mensaje": "Alojamiento actualizado exitosamente",
             "alojamiento": db_alojamiento
@@ -658,13 +690,11 @@ def actualizar_alojamiento(
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error al actualizar: {str(e)}")
     
-
 @app.delete("/reserva/{localizador}")
 def eliminar_reserva(localizador: int, db: Session = Depends(get_db)):
     reserva = db.query(Reserva).filter(Reserva.localizador == localizador).first()
     if not reserva:
         raise HTTPException(status_code=404, detail="Reserva no encontrada")
-    
     try:
         db.delete(reserva)
         db.commit()
@@ -672,3 +702,217 @@ def eliminar_reserva(localizador: int, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error al eliminar la reserva: {str(e)}")    
+    
+@app.get("/lenght_of_stay/{listing_id}")
+def generar_disponibilidad_anual(listing_id: int, db: Session = Depends(get_db)):
+    # Obtener el alojamiento
+    alojamiento = db.query(Alojamiento).filter(Alojamiento.listing == listing_id).first()
+    
+    # Comprobar si el alojamiento existe
+    if not alojamiento:
+        raise HTTPException(status_code=404, detail="Alojamiento no encontrado")
+    
+    # Comprobar si está disponible
+    if not alojamiento.disponible:
+        raise HTTPException(status_code=404, detail="Alojamiento no disponible")
+    
+    # Obtener las reservas y convertir fechas a date()
+    reservas = db.query(Reserva).filter(Reserva.listing_id == listing_id).all()
+    fechas_reservadas = []
+    for reserva in reservas:
+        # Convert datetime to date for comparison
+        inicio = reserva.fecha_entrada.date() if hasattr(reserva.fecha_entrada, 'date') else reserva.fecha_entrada
+        fin = reserva.fecha_salida.date() if hasattr(reserva.fecha_salida, 'date') else reserva.fecha_salida
+        fechas_reservadas.append((inicio, fin))
+
+    # Obtener precios estacionales
+    precios = db.query(seasonalPrices).filter(
+        seasonalPrices.listing == alojamiento.listing
+    ).all()
+    
+    if not precios:
+        raise HTTPException(status_code=404, detail="No hay precios disponibles para este alojamiento")
+
+    # Crear diccionario de precios por fecha (usando date)
+    precio_por_fecha = {}
+    for precio in precios:
+        current_date = precio.start_date.date() if hasattr(precio.start_date, 'date') else precio.start_date
+        end_date = precio.end_date.date() if hasattr(precio.end_date, 'date') else precio.end_date
+        while current_date <= end_date:
+            precio_por_fecha[current_date.strftime("%Y-%m-%d")] = precio.price
+            current_date += datetime.timedelta(days=1)
+
+    # Generar registros disponibles
+    records = []
+    fecha_actual = datetime.datetime.now().date()
+    fecha_final = fecha_actual + datetime.timedelta(days=365)
+    
+    while fecha_actual < fecha_final:
+        fecha_str = fecha_actual.strftime("%Y-%m-%d")
+        
+        # Comprobar si la fecha está reservada
+        esta_reservada = False
+        for inicio, fin in fechas_reservadas:
+            if inicio <= fecha_actual <= fin:
+                esta_reservada = True
+                break
+
+        if not esta_reservada and fecha_str in precio_por_fecha:
+            precio_base = precio_por_fecha[fecha_str]
+            
+            # Generamos combinaciones de ocupantes desde 1 hasta occupants
+            for ocupantes in range(1, alojamiento.occupants + 1):
+                precio_final = precio_base
+                
+                # Crear string de días-precio (1-17 días)
+                dias_precios = [f"{dias}:{precio_final * dias}" for dias in range(1, 18)]
+                
+                # Crear el registro completo
+                records.append(f"{fecha_str},{ocupantes}," + ",".join(dias_precios))
+        
+        fecha_actual += datetime.timedelta(days=1)
+    
+    return {
+        "data": {
+            "records": records
+        }
+    }
+
+class ClientWebhook(Base):
+    __tablename__ = "client_webhooks"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, index=True)
+    webhook_url = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True)
+    secret_token = Column(String)  # Para autenticación
+    event_types = Column(String)  # Tipos de eventos a los que está suscrito (JSON)
+    created_at = Column(DateTime, default=datetime.datetime.now)
+    updated_at = Column(DateTime, default=datetime.datetime.now, onupdate=datetime.datetime.now)
+
+class ClientWebhookCreate(BaseModel):
+    client_id: int
+    webhook_url: str
+    event_types: List[str]
+    is_active: bool = True
+
+class WebhookNotification(BaseModel):
+    event_type: str
+    listing_id: int
+    data: dict
+    timestamp: datetime.datetime
+
+
+async def _send_webhook_implementation(url: str, payload: dict, token: str):
+    """Lógica real de envío sin dependencias de BackgroundTasks"""
+    try:
+        signature = hmac.new(
+            token.encode('utf-8'),
+            json.dumps(payload).encode('utf-8'),
+            hashlib.sha256
+        ).hexdigest()
+        
+        headers = {
+            "Content-Type": "application/json",
+            "X-Webhook-Signature": signature,
+            "X-Event-Type": payload.get("event_type", "unknown")
+        }
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+    except Exception as e:
+        logging.error(f"Webhook error: {str(e)}") 
+
+@app.post("/webhooks/register")
+async def register_webhook(
+    webhook_data: ClientWebhookCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    # Verificar si ya existe un webhook para este cliente
+    existing = db.query(ClientWebhook).filter(
+        ClientWebhook.client_id == webhook_data.client_id,
+        ClientWebhook.webhook_url == webhook_data.webhook_url
+    ).first()
+    
+    if existing:
+        raise HTTPException(status_code=400, detail="Webhook ya registrado para este cliente y URL")
+    
+    # Generar token secreto
+    import secrets
+    secret_token = secrets.token_urlsafe(32)
+    
+    # Crear nuevo webhook
+    new_webhook = ClientWebhook(
+        client_id=webhook_data.client_id,
+        webhook_url=webhook_data.webhook_url,
+        is_active=webhook_data.is_active,
+        secret_token=secret_token,
+        event_types=json.dumps(webhook_data.event_types)
+    )
+    
+    try:
+        db.add(new_webhook)
+        db.commit()
+        db.refresh(new_webhook)
+        
+        test_payload = {
+            "event_type": "webhook_registered",
+            "message": "Webhook registrado exitosamente",
+            "timestamp": datetime.datetime.now().isoformat(),
+            "supported_events": webhook_data.event_types
+        }
+        
+        # Versión corregida usando función sin background_tasks
+        background_tasks.add_task(
+            _send_webhook_implementation,  # Nueva función sin background_tasks
+            url=webhook_data.webhook_url,
+            payload=test_payload,
+            token=secret_token
+        )
+        
+        return {
+            "status": "success",
+            "message": "Webhook registrado exitosamente",
+            "webhook_id": new_webhook.id,
+            "secret_token": secret_token
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al registrar webhook: {str(e)}")
+
+@app.get("/webhooks/{client_id}")
+async def get_client_webhooks(
+    client_id: int,
+    db: Session = Depends(get_db)
+):
+    webhooks = db.query(ClientWebhook).filter(
+        ClientWebhook.client_id == client_id
+    ).all()
+    
+    return [{
+        "id": w.id,
+        "webhook_url": w.webhook_url,
+        "is_active": w.is_active,
+        "event_types": json.loads(w.event_types),
+        "created_at": w.created_at,
+        "updated_at": w.updated_at
+    } for w in webhooks]
+
+@app.delete("/webhooks/{webhook_id}")
+async def delete_webhook(
+    webhook_id: int,
+    db: Session = Depends(get_db)
+):
+    webhook = db.query(ClientWebhook).filter(ClientWebhook.id == webhook_id).first()
+    if not webhook:
+        raise HTTPException(status_code=404, detail="Webhook no encontrado")
+    
+    try:
+        db.delete(webhook)
+        db.commit()
+        return {"status": "success", "message": "Webhook eliminado exitosamente"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al eliminar webhook: {str(e)}")    
