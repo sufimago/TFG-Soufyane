@@ -381,8 +381,8 @@ def obtener_alojamiento_disponible(
     # Consultar el alojamiento específico
     alojamiento_disponible = db.query(Alojamiento).filter(
         Alojamiento.disponible == True,
-        Alojamiento.listing == listing_id,  # Filtramos por el ID del alojamiento
-        Alojamiento.occupants == occupants  # Verificamos la capacidad del alojamiento
+        Alojamiento.listing == listing_id,
+        Alojamiento.occupants >= occupants  # Ahora acepta capacidad suficiente
     ).first()
 
     if not alojamiento_disponible:
