@@ -5,7 +5,7 @@ import json
 import logging
 from random import randint
 import random
-from typing import List
+from typing import List, Optional
 from fastapi import BackgroundTasks, FastAPI, Depends, HTTPException
 import httpx
 from pydantic import BaseModel
@@ -100,13 +100,17 @@ app = FastAPI()
 # 📌 Modelos Pydantic para validación de los datos
 
 class AlojamientoCreate(BaseModel):
-    nombre: str
-    direccion: str
-    ciudad: str
-    pais: str
-    imagen_id: int  # Puede ser None si no hay imagen
-    disponible: bool = True  # Agregado parámetro disponible
-    occupants: int = 1  # Agregado parámetro occupants
+    nombre: Optional[str] = None
+    direccion: Optional[str] = None
+    ciudad: Optional[str] = None
+    pais: Optional[str] = None
+    imagen_id: Optional[int] = None
+    disponible: Optional[bool] = None
+    occupants: Optional[int] = None
+
+class AlojamientoUpdateRequest(BaseModel):
+    listing_id: int
+    alojamiento: AlojamientoCreate
 
 class SeasonalPricesCreate(BaseModel):
     listing: int
@@ -648,7 +652,7 @@ def actualizar_alojamiento(
         raise HTTPException(status_code=404, detail="Alojamiento no encontrado")
 
     # Actualizar los campos
-    update_data = request_data.alojamiento.model_dump()
+    update_data = request_data.alojamiento.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         if hasattr(db_alojamiento, key):
             setattr(db_alojamiento, key, value)
