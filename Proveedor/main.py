@@ -78,11 +78,13 @@ class Reserva(Base):
     __tablename__ = "reservas"
     id = Column(Integer, primary_key=True, autoincrement=True) 
     listing_id = Column(Integer, ForeignKey("alojamientos.listing"))
-    cliente_id = Column(Integer, ForeignKey("clientes.id"))
     fecha_reserva = Column(DateTime, default=datetime.datetime.now)
     fecha_entrada = Column(DateTime)
     fecha_salida = Column(DateTime)
     localizador = Column(Integer, unique=True, index=True)  # Localizador único para la reserva
+    nombre_cliente = Column(String)
+    email_cliente = Column(String)
+    precio_reserva = Column(Float)
 
 Base.metadata.create_all(bind=engine)
 
@@ -108,9 +110,6 @@ class AlojamientoCreate(BaseModel):
     disponible: Optional[bool] = None
     occupants: Optional[int] = None
 
-class AlojamientoUpdateRequest(BaseModel):
-    listing_id: int
-    alojamiento: AlojamientoCreate
 
 class SeasonalPricesCreate(BaseModel):
     listing: int
@@ -137,11 +136,11 @@ class ClienteCreate(BaseModel):
 
 class ReservaCreate(BaseModel):
     listing_id: int
-    cliente_id: int
     fecha_entrada: datetime.datetime
     fecha_salida: datetime.datetime
     nombre_cliente: str 
     email_cliente: str
+    precio_reserva: float
 
 # 📌 ENDPOINTS
 
@@ -241,10 +240,12 @@ def crear_cliente(cliente: ClienteCreate, db: Session = Depends(get_db)):
 def crear_reserva(reserva: ReservaCreate, db: Session = Depends(get_db)):
     nueva_reserva = Reserva(
         listing_id=reserva.listing_id,
-        cliente_id=reserva.cliente_id,
         fecha_entrada=reserva.fecha_entrada,
         fecha_salida=reserva.fecha_salida,
-        localizador=reserva.localizador  # Localizador único para la reserva
+        localizador=reserva.localizador,  # Localizador único para la reserva
+        nombre_cliente=reserva.nombre_cliente,
+        email_cliente=reserva.email_cliente,
+        precio_reserva=reserva.precio_reserva
     )
     
     try:
@@ -350,20 +351,18 @@ def obtener_cliente(cliente_id: int, db: Session = Depends(get_db)):
 @app.get("/traceSearch/{localizador}")
 def obtener_reserva(localizador: int, db: Session = Depends(get_db)):
     reserva = db.query(Reserva).filter(Reserva.localizador == localizador).first()
-    cliente = db.query(Cliente).filter(Cliente.id == reserva.cliente_id).first()
     alojamiento = db.query(Alojamiento).filter(Alojamiento.listing == reserva.listing_id).first()
     if not reserva:
         raise HTTPException(status_code=404, detail="Reserva no encontrada")
     return {
         "reserva": reserva,
-        "cliente": cliente,
         "alojamiento": alojamiento
     }
 
 # Endpoint para obtener todas las reservas de un cliente
-@app.get("/clientes/{cliente_id}/reservas")
-def obtener_reservas_cliente(cliente_id: int, db: Session = Depends(get_db)):
-    reservas = db.query(Reserva).filter(Reserva.cliente_id == cliente_id).all()
+@app.get("/clientes/{email}/reservas")
+def obtener_reservas_cliente(email: str, db: Session = Depends(get_db)):
+    reservas = db.query(Reserva).filter(Reserva.nombre_cliente == email).all()
     return reservas if reservas else {"mensaje": "No hay reservas para este cliente"}
 
 # Endpoint para obtener todas las reservas de un alojamiento
@@ -432,6 +431,7 @@ def obtener_alojamiento_disponible(
     # Devolver el resultado
     return {
         "alojamiento": alojamiento_disponible,
+        "precio_total": total_precio,
         "precio_por_dia": total_precio / dias_totales,
         "ocupantes": occupants,
         "imagen": imagen.link if imagen else None,
@@ -509,6 +509,7 @@ def cotizar_alojamiento(
 @app.post("/confirm")
 def confirmar_reserva(
     data: ReservaCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     # Verificar alojamiento
@@ -553,10 +554,12 @@ def confirmar_reserva(
     localizador = generar_localizador_unico(db)            
     nueva_reserva = Reserva(
         listing_id=data.listing_id,
-        cliente_id=data.cliente_id,
         fecha_entrada=data.fecha_entrada,
         fecha_salida=data.fecha_salida,
-        localizador = localizador  # Localizador único para la reserva
+        localizador = localizador,  # Localizador único para la reserva
+        nombre_cliente=data.nombre_cliente,
+        email_cliente=data.email_cliente,
+        precio_reserva=total_precio
     )
 
     try:
@@ -569,15 +572,36 @@ def confirmar_reserva(
 
     # select alojamiento desde base de datos
     alojamiento = db.query(Alojamiento).filter(Alojamiento.listing == data.listing_id).first()
-    cliente = db.query(Cliente).filter(Cliente.id == data.cliente_id).first()
-    if not cliente:
-        raise HTTPException(status_code=404, detail="Cliente no encontrado")
     
+    # Notificar a los webhooks suscritos
+    webhooks = db.query(ClientWebhook).filter(
+        ClientWebhook.is_active == True,
+        ClientWebhook.event_types.contains("delete_los")
+    ).all()
+
+    payload = {
+        "event_type": "delete_los",
+        "listing_id": data.listing_id,
+        "data": {
+            "fecha_entrada": data.fecha_entrada.isoformat(),
+            "fecha_salida": data.fecha_salida.isoformat(),
+            "listing_id": data.listing_id
+        },
+        "timestamp": datetime.datetime.now().isoformat()
+    }
+
+    for webhook in webhooks:
+        background_tasks.add_task(
+            _send_webhook_implementation,
+            url=webhook.webhook_url,
+            payload=payload,
+            token=webhook.secret_token
+        )
+
     return {
         "mensaje": "Reserva confirmada exitosamente",
         "reserva": {
             "alojamiento_id": data.listing_id,
-            "cliente_id": data.cliente_id,
             "fecha_entrada": data.fecha_entrada,
             "fecha_salida": data.fecha_salida,
             "localizador": localizador,
@@ -585,8 +609,8 @@ def confirmar_reserva(
             "precio_por_dia": total_precio / dias_totales,
             "información alojamiento": alojamiento,
             "información cliente": {
-                "nombre": cliente.nombre,  
-                "email": cliente.email
+                "nombre": data.nombre_cliente,  
+                "email": data.email_cliente
             }
         }
     }
@@ -636,6 +660,10 @@ class AlojamientoUpdateRequest(BaseModel):
     alojamiento: AlojamientoCreate  
     listing_id: int 
 
+class CancelarReservaRequest(BaseModel):
+    localizador: int
+    email_cliente: str    
+
 
 @app.put("/listings")
 def actualizar_alojamiento(
@@ -653,9 +681,16 @@ def actualizar_alojamiento(
 
     # Actualizar los campos
     update_data = request_data.alojamiento.model_dump(exclude_unset=True)
+    changed_fields = {}
+
     for key, value in update_data.items():
         if hasattr(db_alojamiento, key):
-            setattr(db_alojamiento, key, value)
+            old_value = getattr(db_alojamiento, key)
+            if old_value != value:
+                setattr(db_alojamiento, key, value)
+                changed_fields[key] = value
+                #add listing_id to changed_fields
+                changed_fields["listing_id"] = listing_id
 
     try:
         db.commit()
@@ -670,11 +705,7 @@ def actualizar_alojamiento(
         payload = {
             "event_type": "listing_updated",
             "listing_id": listing_id,
-            "data": {
-                "nombre": db_alojamiento.nombre,
-                "disponible": db_alojamiento.disponible,
-                "occupants": db_alojamiento.occupants
-            },
+            "data": changed_fields,
             "timestamp": datetime.datetime.now().isoformat()
         }
         
@@ -693,19 +724,6 @@ def actualizar_alojamiento(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error al actualizar: {str(e)}")
-    
-@app.delete("/reserva/{localizador}")
-def eliminar_reserva(localizador: int, db: Session = Depends(get_db)):
-    reserva = db.query(Reserva).filter(Reserva.localizador == localizador).first()
-    if not reserva:
-        raise HTTPException(status_code=404, detail="Reserva no encontrada")
-    try:
-        db.delete(reserva)
-        db.commit()
-        return {"mensaje": "Reserva eliminada exitosamente"}
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error al eliminar la reserva: {str(e)}")    
     
 @app.get("/lenght_of_stay/{listing_id}")
 def generar_disponibilidad_anual(listing_id: int, db: Session = Depends(get_db)):
@@ -920,3 +938,127 @@ async def delete_webhook(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error al eliminar webhook: {str(e)}")    
+    
+
+@app.post("/cancel")
+def cancelar_reserva(
+    cancelar_reserva: CancelarReservaRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    reserva = db.query(Reserva).filter(
+        Reserva.localizador == cancelar_reserva.localizador,
+        Reserva.email_cliente == cancelar_reserva.email_cliente
+    ).first()
+
+    alojamiento = db.query(Alojamiento).filter(Alojamiento.listing == reserva.listing_id).first()
+    if not alojamiento:
+        raise HTTPException(status_code=404, detail="Alojamiento no encontrado")
+
+    if not reserva:
+        #raise HTTPException(status_code=404, detail="Reserva no encontrada")
+        # enviar mensaje de error al cliente
+        return {"mensaje": "Reserva no encontrada"}
+        
+
+    try:
+        # Guardamos fechas para después
+        fecha_inicio = reserva.fecha_entrada.date()
+        fecha_fin = reserva.fecha_salida.date()
+        listing_id = reserva.listing_id
+
+        db.delete(reserva)
+        db.commit()
+
+        # Generamos el nuevo LOS para fechas que quedaron libres
+        records = generar_los_para_fechas_libres(
+            db=db,
+            listing_id=listing_id,
+            fecha_inicio=fecha_inicio,
+            fecha_fin=fecha_fin,
+            ocupantes_max=alojamiento.occupants
+        )
+
+        webhooks = db.query(ClientWebhook).filter(
+            ClientWebhook.is_active == True,
+            ClientWebhook.event_types.contains("listing_updated")
+        ).all()
+
+        payload = {
+            "event_type": "listing_updated_los",
+            "listing_id": listing_id,
+            "timestamp": datetime.datetime.now().isoformat(),
+            "data": {
+                "records": records
+            }
+        }
+
+        for webhook in webhooks:
+            background_tasks.add_task(
+                _send_webhook_implementation,
+                url=webhook.webhook_url,
+                payload=payload,
+                token=webhook.secret_token
+            )
+
+        return {"mensaje": "Reserva cancelada exitosamente",
+                "records": records}
+    
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al cancelar la reserva: {str(e)}")   
+
+
+def generar_los_para_fechas_libres(db: Session, listing_id: int, fecha_inicio: datetime.date, fecha_fin: datetime.date, ocupantes_max: int):
+    # Obtener reservas restantes del alojamiento
+    reservas = db.query(Reserva).filter(Reserva.listing_id == listing_id).all()
+    fechas_ocupadas = []
+    for r in reservas:
+        fechas_ocupadas.append((
+            r.fecha_entrada.date(),
+            r.fecha_salida.date()
+        ))
+
+    # Obtener precios estacionales
+    precios = db.query(seasonalPrices).filter(
+        seasonalPrices.listing == listing_id
+    ).all()
+
+    # Mapa de precios por fecha
+    precio_por_fecha = {}
+    for precio in precios:
+        current = precio.start_date.date()
+        while current <= precio.end_date.date():
+            precio_por_fecha[current.strftime("%Y-%m-%d")] = precio.price
+            current += datetime.timedelta(days=1)
+
+    # Recorremos las fechas liberadas por la reserva
+    records = []
+    current_date = fecha_inicio
+    while current_date < fecha_fin:
+        esta_ocupada = False
+        for inicio, fin in fechas_ocupadas:
+            if inicio <= current_date <= fin:
+                esta_ocupada = True
+                break
+
+        fecha_str = current_date.strftime("%Y-%m-%d")
+
+        if not esta_ocupada and fecha_str in precio_por_fecha:
+            precio_base = precio_por_fecha[fecha_str]
+            for ocupantes in range(1, ocupantes_max + 1):
+                precios = {}
+                for dias in range(1, 18):
+                    precios[str(dias)] = precio_base * dias
+                
+                record = {
+                    "listing_id": str(listing_id),
+                    "fecha": fecha_str,
+                    "ocupantes": ocupantes,
+                    "precios": precios
+                }
+                recordString = f"{listing_id}_{fecha_str}_{ocupantes}_" + ",".join([f"{dias}:{precio}" for dias, precio in precios.items()])
+                records.append(recordString)
+        current_date += datetime.timedelta(days=1)
+
+    return records
