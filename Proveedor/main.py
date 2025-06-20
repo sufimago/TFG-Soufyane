@@ -13,6 +13,7 @@ from sqlalchemy import create_engine, Column, Integer, String, Boolean, ForeignK
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session
 import datetime
+from dateutil.relativedelta import relativedelta
 
 # 📌 Configuración de SQLite
 DATABASE_URL = "sqlite:///./proveedor.db"  
@@ -984,13 +985,21 @@ def cancelar_reserva(
             ClientWebhook.event_types.contains("listing_updated")
         ).all()
 
+        duracion = (reserva.fecha_salida - reserva.fecha_entrada).days
+        precio_base = 0
+        if duracion > 0:
+            precio_base = reserva.precio_reserva / duracion
+
         payload = {
-            "event_type": "listing_updated_los",
-            "listing_id": listing_id,
-            "timestamp": datetime.datetime.now().isoformat(),
+            "event_type": "update_los",
+            "listing_id": reserva.listing_id,
             "data": {
-                "records": records
-            }
+                "fecha_entrada": reserva.fecha_entrada.isoformat(),
+                "fecha_salida": reserva.fecha_salida.isoformat(),
+                "listing_id": reserva.listing_id,
+                "precio_base" : precio_base,
+            },
+            "timestamp": datetime.datetime.now().isoformat()
         }
 
         for webhook in webhooks:
@@ -1062,3 +1071,4 @@ def generar_los_para_fechas_libres(db: Session, listing_id: int, fecha_inicio: d
         current_date += datetime.timedelta(days=1)
 
     return records
+

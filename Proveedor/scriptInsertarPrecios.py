@@ -2,7 +2,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 import random
 from datetime import datetime
-from Proveedor.main import SessionLocal, seasonalPrices, Alojamiento
+from main import SessionLocal, seasonalPrices, Alojamiento
 
 # Establecer conexión a la base de datos y crear SessionLocal
 DATABASE_URL = "sqlite:///./proveedor.db"
@@ -11,10 +11,10 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def generateSeasonalPrices(db: Session):
     seasons = [
-        ("Winter", datetime(2025, 1, 1), datetime(2025, 3, 31), (100, 130)),
-        ("Spring", datetime(2025, 4, 1), datetime(2025, 6, 30), (120, 150)),
-        ("Summer", datetime(2025, 7, 1), datetime(2025, 9, 30), (140, 175)),
-        ("Fall", datetime(2025, 10, 1), datetime(2025, 12, 31), (110, 140))
+        ("Winter", datetime(2026, 1, 1), datetime(2025, 3, 31), (100, 130)),
+        ("Spring", datetime(2026, 4, 1), datetime(2026, 6, 30), (120, 150)),
+        ("Summer", datetime(2026, 7, 1), datetime(2026, 9, 30), (140, 175)),
+        ("Fall", datetime(2026, 10, 1), datetime(2026, 12, 31), (110, 140))
     ]
     
     listings = [listing[0] for listing in db.query(Alojamiento.listing).all()]
@@ -40,6 +40,6 @@ def printPricesForListing():
 
 if __name__ == "__main__":
     db = SessionLocal()
-    #generateSeasonalPrices(db)
-    printPricesForListing()
+    generateSeasonalPrices(db)
+    #printPricesForListing()
     db.close()
