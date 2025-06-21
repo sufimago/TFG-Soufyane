@@ -11,7 +11,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def generateSeasonalPrices(db: Session):
     seasons = [
-        ("Winter", datetime(2026, 1, 1), datetime(2025, 3, 31), (100, 130)),
+        ("Winter", datetime(2026, 1, 1), datetime(2026, 3, 31), (100, 130)),
         ("Spring", datetime(2026, 4, 1), datetime(2026, 6, 30), (120, 150)),
         ("Summer", datetime(2026, 7, 1), datetime(2026, 9, 30), (140, 175)),
         ("Fall", datetime(2026, 10, 1), datetime(2026, 12, 31), (110, 140))
