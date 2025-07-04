@@ -1,6 +1,7 @@
 import requests
 import json
-import random  # importa la función random correctamente
+import random
+from concurrent.futures import ThreadPoolExecutor
 
 # Lista de imágenes disponibles
 images = [
@@ -15,33 +16,31 @@ images = [
     "https://www.mammaproof.org/barcelona/wp-content/uploads/sites/11/2023/05/cal-carulla-portada-min-1180x885-1180x885-1-1180x885.jpg"
 ]
 
+# Función para insertar imagen
+def insert_image(listing_id):
+    image_link = random.choice(images)
+    payload = {
+        "listing_id": listing_id,
+        "link": image_link
+    }
+    url_images = "http://13.61.3.156:8000/images"
+    headers = {'Content-Type': 'application/json'}
+    try:
+        post_response = requests.post(url_images, headers=headers, data=json.dumps(payload))
+        if post_response.status_code == 200:
+            print(f"✅ Imagen insertada correctamente en listing {listing_id}")
+        else:
+            print(f"❌ Error al insertar imagen en listing {listing_id}: {post_response.text}")
+    except Exception as e:
+        print(f"❌ Excepción en listing {listing_id}: {str(e)}")
+
 # Obtener los listings
-url_listings = "http://13.38.12.142/listings"
+url_listings = "http://13.61.3.156:8000/listings"
 response = requests.get(url_listings)
 
 if response.status_code == 200:
     listings = response.json()
-
-    for listing in listings:
-        listing_id = listing.get("listing")
-
-        # Seleccionar imagen aleatoria
-        image_link = random.choice(images)
-
-        # Construir payload
-        payload = {
-            "listing_id": listing_id,
-            "link": image_link
-        }
-
-        # Hacer POST a /images
-        url_images = "http://13.38.12.142/images"
-        headers = {'Content-Type': 'application/json'}
-        post_response = requests.post(url_images, headers=headers, data=json.dumps(payload))
-
-        if post_response.status_code == 200:
-            print(f"Imagen insertada correctamente en listing {listing_id}")
-        else:
-            print(f"Error al insertar imagen en listing {listing_id}: {post_response.text}")
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        executor.map(lambda l: insert_image(l.get("listing")), listings)
 else:
-    print(f"Error al obtener listings: {response.status_code} - {response.text}")
+    print(f"❌ Error al obtener listings: {response.status_code} - {response.text}")

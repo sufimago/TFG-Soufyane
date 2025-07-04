@@ -2,7 +2,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from faker import Faker
 import random
-from Proveedor.main import SessionLocal, Alojamiento, Image, ListingCommission, ListingService
+from main import SessionLocal, Alojamiento, Image, ListingCommission, ListingService
 
 # Inicializar Faker
 fake = Faker("es_ES")
@@ -81,5 +81,5 @@ def generar_datos(db: Session, cantidad: int):
 # Llamada a la función para generar datos
 if __name__ == "__main__":
     db = SessionLocal()  # Iniciar una sesión de base de datos
-    generar_datos(db, 500)  # Generar 500 registros por cada tabla
+    generar_datos(db, 10000)  # Generar 500 registros por cada tabla
     db.close()  # Cerrar la sesión de base de datos
