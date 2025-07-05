@@ -23,7 +23,7 @@ def generar_alojamiento(db: Session, cantidad: int):
             listing=siguiente_listing,
             nombre=fake.company(),
             direccion=fake.address(),
-            ciudad=fake.city(),
+            ciudad="Mallorca",
             pais="España",
             disponible=random.choice([True])  
         )
@@ -72,14 +72,14 @@ def generar_servicios(db: Session, cantidad: int):
 
 # Función para generar todos los datos
 def generar_datos(db: Session, cantidad: int):
-   # generar_alojamiento(db, cantidad)
+    generar_alojamiento(db, cantidad)
     #generar_imagenes(db, cantidad)
     generar_comisiones(db, cantidad)
-    #generar_servicios(db, cantidad)
+    generar_servicios(db, cantidad)
     #print(f"{cantidad} registros generados exitosamente.")
 
 # Llamada a la función para generar datos
 if __name__ == "__main__":
     db = SessionLocal()  # Iniciar una sesión de base de datos
-    generar_datos(db, 300)  # Generar 500 registros por cada tabla
+    generar_datos(db, 500)  # Generar 500 registros por cada tabla
     db.close()  # Cerrar la sesión de base de datos
