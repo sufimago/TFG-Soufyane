@@ -23,7 +23,7 @@ def insert_image(listing_id):
         "listing_id": listing_id,
         "link": image_link
     }
-    url_images = "http://13.61.3.156:8000/images"
+    url_images = "http://127.0.0.1:8000/images"
     headers = {'Content-Type': 'application/json'}
     try:
         post_response = requests.post(url_images, headers=headers, data=json.dumps(payload))
@@ -35,7 +35,7 @@ def insert_image(listing_id):
         print(f"❌ Excepción en listing {listing_id}: {str(e)}")
 
 # Obtener los listings
-url_listings = "http://13.61.3.156:8000/listings"
+url_listings = "http://127.0.0.1:8000/listings"
 response = requests.get(url_listings)
 
 if response.status_code == 200:
